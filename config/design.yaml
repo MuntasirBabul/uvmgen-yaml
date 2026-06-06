@@ -9,33 +9,21 @@ project:
   package_name: dff_pkg
 
 # ============================================================
-# Interfaces
-# ============================================================
-
-interfaces:
-  - name: dff_if
-    clock: clk
-    reset: rst_n
-
-    signals:
-      - {name: tx, type: logic}
-      - {name: rx, type: logic}
-      - {name: baud_tick, type: logic}
-
-# ============================================================
 # Environment
 # ============================================================
 
 environment:
-  name: env
-  components:
-    scoreboard: dff_scoreboard
-    coverage: dff_coverage
-  connections:
-    - source: dff_tx_agent.monitor.ap
-      destination: dff_scoreboard.expected_export
-    - source: dff_rx_agent.monitor.ap
-      destination: dff_scoreboard.actual_export
+  - name: dff_env
+    components:
+      scoreboard: dff_scoreboard
+      coverage: dff_coverage
+      agents:
+        - dff_agent
+    connections:
+      - source: dff_agent_handle.dff_monitor_handle.monitor_analysis_port
+        destination: dff_scoreboard.expected_export
+      - source: dff_agent_handle.dff_monitor_handle.monitor_analysis_port
+        destination: dff_scoreboard.actual_export
 
 # ============================================================
 # Agents
@@ -44,25 +32,29 @@ environment:
 agents:
   - name: dff_agent
     type: active              # active | passive
-    interface: dff_if
     components:
       sequencer:
         name: dff_sequencer
-        generate: true
+        sequence_item: dff_txn
       driver:
         name: dff_driver
-        generate: true
-        components:
-          sequence_item: dff_txn
+        sequence_item: dff_txn
       monitor:
         name: dff_monitor
-        generate: true
-        components:
-          sequence_item: dff_rcv
+        sequence_item: dff_rcv
       coverage:
         name: dff_coverage
-        enable: true
-
+      interface:
+        name: dff_interface
+        signals:
+          - {name: d_i,   type: "logic"}
+          - {name: reset, type: "logic"}
+          - {name: q_norst_o,   type: "logic"}
+          - {name: q_async_rising_clk_rising_reset_o, type: "logic"}
+          - {name: q_async_rising_clk_falling_reset_o, type: "logic"}
+          - {name: q_async_falling_clk_falling_reset_o, type: "logic"}
+          - {name: q_async_falling_clk_rising_reset_o, type: "logic"}
+          - {name: q_sync_reset_o, type: "logic"}   
 
 sequence_items:
   - name: dff_txn
@@ -86,16 +78,15 @@ sequence_items:
       - {name: q_async_falling_clk_rising_reset_o, type: "bit"}
       - {name: q_sync_reset_o, type: "bit"}   
 
-  
-
 # ============================================================
 # Sequences
 # ============================================================
 
 sequences:
-
   - name: dff_base_seq
     base_class: uvm_sequence
+    body:
+      num_transactions: 10
 
   - name: dff_smoke_seq
     base_class: dff_base_seq
@@ -112,11 +103,9 @@ sequences:
 # ============================================================
 
 scoreboard:
-  enable: true
-  name: dff_scoreboard
-  analysis_exports:
-    - expected_export
-    - actual_export
+  - name: dff_scoreboard
+    sequence_item: dff_rcv
+
 
 # ============================================================
 # Coverage
