@@ -1,0 +1,223 @@
+# ============================================================
+# Project Information
+# ============================================================
+
+project:
+  name: dff_tb
+  dut_name: dff_top
+  top_env: dff_env
+  package_name: dff_pkg
+
+# ============================================================
+# Interfaces
+# ============================================================
+
+interfaces:
+  - name: dff_if
+    clock: clk
+    reset: rst_n
+
+    signals:
+      - {name: tx, type: logic}
+      - {name: rx, type: logic}
+      - {name: baud_tick, type: logic}
+
+# ============================================================
+# Environment
+# ============================================================
+
+environment:
+  name: env
+  components:
+    scoreboard: dff_scoreboard
+    coverage: dff_coverage
+  connections:
+    - source: dff_tx_agent.monitor.ap
+      destination: dff_scoreboard.expected_export
+    - source: dff_rx_agent.monitor.ap
+      destination: dff_scoreboard.actual_export
+
+# ============================================================
+# Agents
+# ============================================================
+
+agents:
+  - name: dff_agent
+    type: active              # active | passive
+    interface: dff_if
+    components:
+      sequencer:
+        name: dff_sequencer
+        generate: true
+      driver:
+        name: dff_driver
+        generate: true
+        components:
+          sequence_item: dff_txn
+      monitor:
+        name: dff_monitor
+        generate: true
+        components:
+          sequence_item: dff_rcv
+      coverage:
+        name: dff_coverage
+        enable: true
+
+
+sequence_items:
+  - name: dff_txn
+    fields:
+      #- {name: data, type: "bit [7:0]", rand: true}
+      - {name: d_i,   type: "bit"}
+      - {name: reset, type: "bit"}
+    constraints: 
+    - name: dff_txn_c
+      items: 
+        - "data inside {[0:127], [128:255]};"
+        - "stop_bits inside {1,2};"
+  - name: dff_rcv
+    fields:
+      - {name: d_i,   type: "bit"}
+      - {name: reset, type: "bit"}
+      - {name: q_norst_o,   type: "bit"}
+      - {name: q_async_rising_clk_rising_reset_o, type: "bit"}
+      - {name: q_async_rising_clk_falling_reset_o, type: "bit"}
+      - {name: q_async_falling_clk_falling_reset_o, type: "bit"}
+      - {name: q_async_falling_clk_rising_reset_o, type: "bit"}
+      - {name: q_sync_reset_o, type: "bit"}   
+
+  
+
+# ============================================================
+# Sequences
+# ============================================================
+
+sequences:
+
+  - name: dff_base_seq
+    base_class: uvm_sequence
+
+  - name: dff_smoke_seq
+    base_class: dff_base_seq
+    body:
+      num_transactions: 10
+
+  - name: dff_random_seq
+    base_class: dff_base_seq
+    body:
+      num_transactions: 100
+
+# ============================================================
+# Scoreboard
+# ============================================================
+
+scoreboard:
+  enable: true
+  name: dff_scoreboard
+  analysis_exports:
+    - expected_export
+    - actual_export
+
+# ============================================================
+# Coverage
+# ============================================================
+
+coverage:
+  enable: true
+  name: dff_coverage
+  covergroups:
+    - name: cg_data
+      coverpoints:
+        - field: data
+          bins:
+            - low
+            - mid
+            - high
+    - name: cg_parity
+      coverpoints:
+        - field: parity
+
+
+
+# ============================================================
+# Configuration Objects
+# ============================================================
+
+config_objects:
+  - name: dff_env_cfg
+    fields:
+      - {name: has_scoreboard, type: bit, default: 1}
+      - {name: has_coverage, type: bit, default: 1}
+  - name: dff_agent_cfg
+    fields:
+      - {name: is_active, type: uvm_active_passive_enum, default: UVM_ACTIVE}
+      - {name: baud_rate, type: int, default: 115200}
+
+# ============================================================
+# Register Model (Optional)
+# ============================================================
+
+register_model:
+  enable: true
+  block_name: dff_reg_block
+  registers:
+    - name: CTRL
+      address: 0x00
+      fields:
+        - {name: enable, lsb: 0, width: 1}
+        - {name: parity_en, lsb: 1, width: 1}
+    - name: STATUS
+      address: 0x04
+      fields:
+        - {name: tx_busy, lsb: 0, width: 1}
+        - {name: rx_ready, lsb: 1, width: 1}
+
+# ============================================================
+# Tests
+# ============================================================
+
+tests:
+  - name: dff_base_test
+    base_class: uvm_test
+    default_sequence: dff_base_seq
+  
+  - name: dff_smoke_test
+    base_class: dff_base_test
+    default_sequence: dff_smoke_seq
+  
+  - name: dff_random_test
+    base_class: dff_base_test
+    default_sequence: dff_random_seq
+
+# ============================================================
+# Generation Options
+# ============================================================
+
+generation:
+  create_pkg: true
+  create_top_tb: true
+  create_makefile: true
+  create_filelist: true
+  create_interface: true
+  create_ral_model: true
+  create_coverage: true
+  create_scoreboard: true
+  overwrite_existing_files: false
+
+# ============================================================
+# Output Structure
+# ============================================================
+
+output:
+  root_dir: generated_tb
+  folders:
+    - agents
+    - env
+    - tests
+    - sequences
+    - interfaces
+    - config
+    - coverage
+    - scoreboard
+    - ral
+    - pkg
