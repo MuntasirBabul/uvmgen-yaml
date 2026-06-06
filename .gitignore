@@ -1,0 +1,9 @@
+# Ignore a specific file
+
+# Ignore an entire folder (always add a trailing slash)
+generated/
+
+# Ignore all files matching an extension
+*.log
+*.tmp
+
