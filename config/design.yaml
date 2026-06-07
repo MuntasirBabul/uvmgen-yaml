@@ -3,10 +3,10 @@
 # ============================================================
 
 project:
-  name: dff_tb
-  dut_name: dff_top
-  top_env: dff_env
-  package_name: dff_pkg
+  - name: dff_tb
+    dut_name: dff_top
+    top_env: dff_env
+    package_name: dff_pkg
 
 # ============================================================
 # Environment
