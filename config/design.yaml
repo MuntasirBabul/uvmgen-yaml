@@ -18,12 +18,10 @@ environment:
       scoreboard: dff_scoreboard
       coverage: dff_coverage
       agents:
-        - dff_agent
+        - {name: dff_agent, num_obj: 2}
     connections:
-      - source: dff_agent_handle.dff_monitor_handle.monitor_analysis_port
-        destination: dff_scoreboard.expected_export
-      - source: dff_agent_handle.dff_monitor_handle.monitor_analysis_port
-        destination: dff_scoreboard.actual_export
+      - source: dff_monitor_handle.monitor_analysis_port
+        destination: dff_scoreboard_handle.uvm_imp
 
 # ============================================================
 # Agents
@@ -42,19 +40,34 @@ agents:
       monitor:
         name: dff_monitor
         sequence_item: dff_rcv
+        ports:
+          - {name: monitor_analysis_port, type: uvm_analysis_port, base_class: dff_rcv}
       coverage:
         name: dff_coverage
       interface:
         name: dff_interface
-        signals:
-          - {name: d_i,   type: "logic"}
-          - {name: reset, type: "logic"}
-          - {name: q_norst_o,   type: "logic"}
-          - {name: q_async_rising_clk_rising_reset_o, type: "logic"}
-          - {name: q_async_rising_clk_falling_reset_o, type: "logic"}
-          - {name: q_async_falling_clk_falling_reset_o, type: "logic"}
-          - {name: q_async_falling_clk_rising_reset_o, type: "logic"}
-          - {name: q_sync_reset_o, type: "logic"}   
+    connection:
+      - {source: dff_sequencer, destination: dff_driver}
+
+# ============================================================
+# Interfaces
+# ============================================================
+
+interface:
+  - name: dff_interface
+    signals:
+      - {name: d_i,   type: "logic"}
+      - {name: reset, type: "logic"}
+      - {name: q_norst_o,   type: "logic"}
+      - {name: q_async_rising_clk_rising_reset_o, type: "logic"}
+      - {name: q_async_rising_clk_falling_reset_o, type: "logic"}
+      - {name: q_async_falling_clk_falling_reset_o, type: "logic"}
+      - {name: q_async_falling_clk_rising_reset_o, type: "logic"}
+      - {name: q_sync_reset_o, type: "logic"}   
+
+# ============================================================
+# sequence_items
+# ============================================================
 
 sequence_items:
   - name: dff_txn
@@ -105,28 +118,26 @@ sequences:
 scoreboard:
   - name: dff_scoreboard
     sequence_item: dff_rcv
-
+    ports:
+      - {name: uvm_imp, type: uvm_analysis_imp, base_class: "dff_rcv, dff_scoreboard"}
 
 # ============================================================
 # Coverage
 # ============================================================
 
 coverage:
-  enable: true
-  name: dff_coverage
-  covergroups:
-    - name: cg_data
-      coverpoints:
-        - field: data
-          bins:
-            - low
-            - mid
-            - high
-    - name: cg_parity
-      coverpoints:
-        - field: parity
-
-
+  - name: dff_coverage
+    covergroups:
+      - name: cg_data
+        coverpoints:
+          - field: data
+            bins: 
+              - low
+              - mid
+              - high
+      - name: cg_parity
+        coverpoints:
+          - field: parity
 
 # ============================================================
 # Configuration Objects
@@ -169,14 +180,17 @@ tests:
   - name: dff_base_test
     base_class: uvm_test
     default_sequence: dff_base_seq
+    environment: dff_env
   
   - name: dff_smoke_test
     base_class: dff_base_test
     default_sequence: dff_smoke_seq
+    environment: dff_env
   
   - name: dff_random_test
     base_class: dff_base_test
     default_sequence: dff_random_seq
+    environment: dff_env
 
 # ============================================================
 # Generation Options
