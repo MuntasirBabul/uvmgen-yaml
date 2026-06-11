@@ -3,25 +3,34 @@
 # ============================================================
 
 project:
-  - name: dff_tb
-    dut_name: dff_top
-    top_env: dff_env
-    package_name: dff_pkg
+  name: dff_tb
+  dut_name: dff_top
+  top_env: dff_env
+  package_name: dff_pkg
 
 # ============================================================
 # Environment
+#
+# connections use hierarchical paths relative to the env:
+#   <agent>[<idx>].<subcomponent>.<port>   (omit [idx] to broadcast
+#                                           to every agent instance)
+#   <scoreboard>.<port>
+#   <coverage>.analysis_export
 # ============================================================
 
 environment:
   - name: dff_env
+    config_object: dff_env_cfg
     components:
       scoreboard: dff_scoreboard
       coverage: dff_coverage
       agents:
-        - {name: dff_agent, num_obj: 2}
+        - {name: dff_agent, num_obj: 2, config_object: dff_agent_cfg}
     connections:
-      - source: dff_monitor_handle.monitor_analysis_port
-        destination: dff_scoreboard_handle.uvm_imp
+      - source: dff_agent[0].dff_monitor.monitor_analysis_port
+        destination: dff_scoreboard.uvm_imp
+      - source: dff_agent[0].dff_monitor.monitor_analysis_port
+        destination: dff_coverage.analysis_export
 
 # ============================================================
 # Agents
@@ -30,6 +39,7 @@ environment:
 agents:
   - name: dff_agent
     type: active              # active | passive
+    config_object: dff_agent_cfg
     components:
       sequencer:
         name: dff_sequencer
@@ -42,8 +52,6 @@ agents:
         sequence_item: dff_rcv
         ports:
           - {name: monitor_analysis_port, type: uvm_analysis_port, base_class: dff_rcv}
-      coverage:
-        name: dff_coverage
       interface:
         name: dff_interface
     connection:
@@ -55,15 +63,16 @@ agents:
 
 interface:
   - name: dff_interface
+    clock: clk
+    reset: reset
     signals:
       - {name: d_i,   type: "logic"}
-      - {name: reset, type: "logic"}
       - {name: q_norst_o,   type: "logic"}
       - {name: q_async_rising_clk_rising_reset_o, type: "logic"}
       - {name: q_async_rising_clk_falling_reset_o, type: "logic"}
       - {name: q_async_falling_clk_falling_reset_o, type: "logic"}
       - {name: q_async_falling_clk_rising_reset_o, type: "logic"}
-      - {name: q_sync_reset_o, type: "logic"}   
+      - {name: q_sync_reset_o, type: "logic"}
 
 # ============================================================
 # sequence_items
@@ -72,14 +81,12 @@ interface:
 sequence_items:
   - name: dff_txn
     fields:
-      #- {name: data, type: "bit [7:0]", rand: true}
-      - {name: d_i,   type: "bit"}
-      - {name: reset, type: "bit"}
-    constraints: 
-    - name: dff_txn_c
-      items: 
-        - "data inside {[0:127], [128:255]};"
-        - "stop_bits inside {1,2};"
+      - {name: d_i,   type: "bit", rand: true}
+      - {name: reset, type: "bit", rand: true}
+    constraints:
+      - name: dff_txn_c
+        items:
+          - "reset dist {0 := 90, 1 := 10};"
   - name: dff_rcv
     fields:
       - {name: d_i,   type: "bit"}
@@ -89,15 +96,18 @@ sequence_items:
       - {name: q_async_rising_clk_falling_reset_o, type: "bit"}
       - {name: q_async_falling_clk_falling_reset_o, type: "bit"}
       - {name: q_async_falling_clk_rising_reset_o, type: "bit"}
-      - {name: q_sync_reset_o, type: "bit"}   
+      - {name: q_sync_reset_o, type: "bit"}
 
 # ============================================================
 # Sequences
+# (a root sequence with base_class uvm_sequence must give its
+#  sequence_item; derived sequences inherit it)
 # ============================================================
 
 sequences:
   - name: dff_base_seq
     base_class: uvm_sequence
+    sequence_item: dff_txn
     body:
       num_transactions: 10
 
@@ -127,17 +137,18 @@ scoreboard:
 
 coverage:
   - name: dff_coverage
+    sequence_item: dff_rcv
     covergroups:
-      - name: cg_data
+      - name: cg_dff_inputs
         coverpoints:
-          - field: data
-            bins: 
-              - low
-              - mid
-              - high
-      - name: cg_parity
+          - field: d_i
+          - field: reset
+        crosses:
+          - {name: d_x_reset, items: [d_i, reset]}
+      - name: cg_dff_outputs
         coverpoints:
-          - field: parity
+          - field: q_norst_o
+          - field: q_sync_reset_o
 
 # ============================================================
 # Configuration Objects
@@ -151,7 +162,6 @@ config_objects:
   - name: dff_agent_cfg
     fields:
       - {name: is_active, type: uvm_active_passive_enum, default: UVM_ACTIVE}
-      - {name: baud_rate, type: int, default: 115200}
 
 # ============================================================
 # Register Model (Optional)
@@ -160,17 +170,18 @@ config_objects:
 register_model:
   enable: true
   block_name: dff_reg_block
+  reg_width: 32
   registers:
     - name: CTRL
       address: 0x00
       fields:
-        - {name: enable, lsb: 0, width: 1}
-        - {name: parity_en, lsb: 1, width: 1}
+        - {name: enable, lsb: 0, width: 1, access: RW}
+        - {name: parity_en, lsb: 1, width: 1, access: RW}
     - name: STATUS
       address: 0x04
       fields:
-        - {name: tx_busy, lsb: 0, width: 1}
-        - {name: rx_ready, lsb: 1, width: 1}
+        - {name: tx_busy, lsb: 0, width: 1, access: RO}
+        - {name: rx_ready, lsb: 1, width: 1, access: RO}
 
 # ============================================================
 # Tests
@@ -181,12 +192,12 @@ tests:
     base_class: uvm_test
     default_sequence: dff_base_seq
     environment: dff_env
-  
+
   - name: dff_smoke_test
     base_class: dff_base_test
     default_sequence: dff_smoke_seq
     environment: dff_env
-  
+
   - name: dff_random_test
     base_class: dff_base_test
     default_sequence: dff_random_seq
@@ -205,7 +216,7 @@ generation:
   create_ral_model: true
   create_coverage: true
   create_scoreboard: true
-  overwrite_existing_files: false
+  overwrite_existing_files: true
 
 # ============================================================
 # Output Structure

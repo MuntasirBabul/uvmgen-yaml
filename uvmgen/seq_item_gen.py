@@ -1,51 +1,45 @@
-import yaml
-from pathlib import Path
-
-with open("config/design.yaml") as f:
-  cfg = yaml.safe_load(f)
-
 ###########################################################
-# Generate sequence_item.sv
+# seq_item_gen.py - generate uvm_sequence_item classes
 ###########################################################
-def gen_sequence_item(seq_item):
-  seq_item_name = seq_item["name"]
-  out_dir = Path(f"generated/test/seq_items/")
-  out_dir.mkdir(parents=True, exist_ok=True)
-  with open(out_dir / f"{seq_item_name}.sv", "w") as f:
-    f.write(f"// {seq_item_name} Sequence Item\n\n")
-    #f.write(f"`include \"uvm_macros.svh\"\n\n")
-    f.write(f"class {seq_item_name} extends uvm_sequence_item;\n\n")
-    f.write(f"  `uvm_object_utils({seq_item_name})\n\n")
-    f.write(f"   function new(string name = \"{seq_item_name}\");\n")
-    f.write(f"     super.new(name);\n")
-    f.write(f"   endfunction\n\n")
-    f.write(f"   // Declare transaction fields\n")
-    for field in seq_item["fields"]:
-      f.write(f"   {field['type']} {field['name']};\n")
-    f.write(f"\n")
-    f.write(f"   // Use utility macros to implement standard functions\n")
-    f.write(f"   `uvm_object_utils_begin({seq_item_name})\n")
-    for field in seq_item["fields"]:      
-      f.write(f"    `uvm_field_int({field['name']}, UVM_ALL_ON)\n")
-    f.write(f"   `uvm_object_utils_end\n\n")
+from core import Model, SVWriter, write_file
 
-    if "constraints" in seq_item:
-      f.write(f"   // Constraints\n")
-      for c in seq_item["constraints"]:
-        f.write(f"   constraint {c['name']} \n")
-        f.write("   { \n")
-        for item in c['items']:
-          f.write(f"     {item}\n")
-        f.write("   }\n\n")
-    f.write(f"endclass\n")
 
-###########################################################
-# Execute generation based on config
-###########################################################
-def main():
-  
-  for item in cfg["sequence_items"]:
-    gen_sequence_item(item)
+def gen_sequence_item(model: Model, seq_item):
+  name = seq_item["name"]
+  s = SVWriter()
+  s.w(f"// {name} Sequence Item")
+  s.w()
+  s.begin(f"class {name} extends uvm_sequence_item;")
+  s.w()
+  s.w("// Transaction fields")
+  for field in seq_item.get("fields", []):
+    rand = "rand " if field.get("rand") else ""
+    s.w(f"{rand}{field['type']} {field['name']};")
+  s.w()
+  s.begin(f"`uvm_object_utils_begin({name})")
+  for field in seq_item.get("fields", []):
+    s.w(f"`uvm_field_int({field['name']}, UVM_ALL_ON)")
+  s.end("`uvm_object_utils_end")
+  s.w()
+  s.begin(f"function new(string name = \"{name}\");")
+  s.w("super.new(name);")
+  s.end("endfunction")
+  s.w()
+  for c in seq_item.get("constraints", []) or []:
+    s.begin(f"constraint {c['name']} {{")
+    for item in c.get("items", []):
+      s.w(item)
+    s.end("}")
+    s.w()
+  s.user_code(f"{name}_methods")
+  s.w()
+  s.end("endclass")
 
-if __name__ == "__main__":
-  main()
+  path = model.dir("sequences") / f"{name}.sv"
+  write_file(path, s.text(), model.overwrite)
+  model.register("sequence_items", path)
+
+
+def generate(model: Model):
+  for item in model.seq_items.values():
+    gen_sequence_item(model, item)

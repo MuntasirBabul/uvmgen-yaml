@@ -1,71 +1,126 @@
-import yaml
-from pathlib import Path
-
-with open("config/design.yaml") as f:
-  cfg = yaml.safe_load(f)
-
 ###########################################################
-# Generate RAL register classes and block
+# ral_gen.py - generate UVM register model (RAL) + adapter
 ###########################################################
-def gen_ral():
-  reg_model = cfg.get("register_model")
-  if not reg_model or not reg_model.get("enable"):
+from core import Model, SVWriter, write_file
+
+
+def gen_register(model: Model, s: SVWriter, reg, reg_width):
+  name = reg["name"]
+  s.begin(f"class {name}_reg extends uvm_reg;")
+  s.w()
+  s.w(f"`uvm_object_utils({name}_reg)")
+  s.w()
+  for field in reg.get("fields", []):
+    s.w(f"rand uvm_reg_field {field['name']};")
+  s.w()
+  s.begin(f"function new(string name = \"{name}_reg\");")
+  s.w(f"super.new(name, {reg_width}, UVM_NO_COVERAGE);")
+  s.end("endfunction")
+  s.w()
+  s.begin("virtual function void build();")
+  for field in reg.get("fields", []):
+    fname = field["name"]
+    access = field.get("access", "RW")
+    s.w(f"{fname} = uvm_reg_field::type_id::create(\"{fname}\");")
+    s.w(f"{fname}.configure(this, {field['width']}, {field['lsb']}, \"{access}\", "
+        f"0, {field.get('reset', 0)}, 1, 1, 0);")
+  s.end("endfunction")
+  s.w()
+  s.end("endclass")
+  s.w()
+
+
+def gen_reg_block(model: Model):
+  rm = model.register_model
+  block = rm["block_name"]
+  reg_width = rm.get("reg_width", 32)
+  byte_width = reg_width // 8
+
+  s = SVWriter()
+  s.w(f"// {block} Register Model (RAL)")
+  s.w()
+  for reg in rm.get("registers", []):
+    gen_register(model, s, reg, reg_width)
+
+  s.begin(f"class {block} extends uvm_reg_block;")
+  s.w()
+  s.w(f"`uvm_object_utils({block})")
+  s.w()
+  for reg in rm.get("registers", []):
+    s.w(f"rand {reg['name']}_reg {reg['name']};")
+  s.w()
+  s.begin(f"function new(string name = \"{block}\");")
+  s.w("super.new(name, UVM_NO_COVERAGE);")
+  s.end("endfunction")
+  s.w()
+  s.begin("virtual function void build();")
+  s.w(f"default_map = create_map(\"default_map\", 0, {byte_width}, UVM_LITTLE_ENDIAN);")
+  for reg in rm.get("registers", []):
+    rname = reg["name"]
+    s.w(f"{rname} = {rname}_reg::type_id::create(\"{rname}\");")
+    s.w(f"{rname}.configure(this);")
+    s.w(f"{rname}.build();")
+    s.w(f"default_map.add_reg({rname}, 'h{reg['address']:X}, \"RW\");")
+  s.end("endfunction")
+  s.w()
+  s.end("endclass")
+
+  path = model.dir("ral") / f"{block}.sv"
+  write_file(path, s.text(), model.overwrite)
+  model.register("ral", path)
+
+
+def gen_adapter(model: Model):
+  rm = model.register_model
+  block = rm["block_name"]
+  # bus item: sequence item of the first active agent's driver
+  bus_item = None
+  for agent in model.agents.values():
+    drv = agent.get("components", {}).get("driver")
+    if drv:
+      bus_item = drv["sequence_item"]
+      break
+  if bus_item is None:
+    bus_item = next(iter(model.seq_items), "uvm_sequence_item")
+
+  s = SVWriter()
+  s.w(f"// {block}_adapter - converts uvm_reg_bus_op <-> {bus_item}")
+  s.w()
+  s.begin(f"class {block}_adapter extends uvm_reg_adapter;")
+  s.w()
+  s.w(f"`uvm_object_utils({block}_adapter)")
+  s.w()
+  s.begin(f"function new(string name = \"{block}_adapter\");")
+  s.w("super.new(name);")
+  s.w("supports_byte_enable = 0;")
+  s.w("provides_responses = 0;")
+  s.end("endfunction")
+  s.w()
+  s.begin("virtual function uvm_sequence_item reg2bus(const ref uvm_reg_bus_op rw);")
+  s.w(f"{bus_item} bus_txn = {bus_item}::type_id::create(\"bus_txn\");")
+  s.w("// Map register operation (rw.kind, rw.addr, rw.data) onto bus transaction fields")
+  s.user_code(f"{block}_adapter_reg2bus")
+  s.w("return bus_txn;")
+  s.end("endfunction")
+  s.w()
+  s.begin("virtual function void bus2reg(uvm_sequence_item bus_item, ref uvm_reg_bus_op rw);")
+  s.w(f"{bus_item} bus_txn;")
+  s.w("if (!$cast(bus_txn, bus_item))")
+  s.w(f"  `uvm_fatal(\"{block.upper()}_ADAPTER\", \"bus_item is not a {bus_item}\")")
+  s.w("// Map bus transaction fields back onto rw.kind / rw.addr / rw.data / rw.status")
+  s.user_code(f"{block}_adapter_bus2reg")
+  s.w("rw.status = UVM_IS_OK;")
+  s.end("endfunction")
+  s.w()
+  s.end("endclass")
+
+  path = model.dir("ral") / f"{block}_adapter.sv"
+  write_file(path, s.text(), model.overwrite)
+  model.register("ral", path)
+
+
+def generate(model: Model):
+  if not (model.register_model.get("enable") and model.enabled("create_ral_model")):
     return
-
-  block_name = reg_model["block_name"]
-  registers  = reg_model["registers"]
-  out_dir    = Path("generated/ral/")
-  out_dir.mkdir(parents=True, exist_ok=True)
-
-  with open(out_dir / f"{block_name}.sv", "w") as f:
-
-    # One uvm_reg subclass per register
-    for reg in registers:
-      reg_class = f"{block_name}_{reg['name'].lower()}_reg"
-      f.write(f"// {reg['name']} register\n")
-      f.write(f"class {reg_class} extends uvm_reg;\n\n")
-      f.write(f"  `uvm_object_utils({reg_class})\n\n")
-      for field in reg["fields"]:
-        f.write(f"  rand uvm_reg_field {field['name']};\n")
-      f.write(f"\n  function new(string name = \"{reg_class}\");\n")
-      f.write(f"    super.new(name, 32, UVM_NO_COVERAGE);\n")
-      f.write(f"  endfunction\n\n")
-      f.write(f"  virtual function void build();\n")
-      for field in reg["fields"]:
-        f.write(f"    {field['name']} = uvm_reg_field::type_id::create(\"{field['name']}\");\n")
-        # configure(parent, size, lsb_pos, access, volatile, reset, has_reset, is_rand, individually_accessible)
-        f.write(f"    {field['name']}.configure(this, {field['width']}, {field['lsb']}, \"RW\", 0, 0, 1, 1, 0);\n")
-      f.write(f"  endfunction\n\n")
-      f.write(f"endclass\n\n")
-
-    # Register block
-    f.write(f"// {block_name} register block\n")
-    f.write(f"class {block_name} extends uvm_reg_block;\n\n")
-    f.write(f"  `uvm_object_utils({block_name})\n\n")
-    for reg in registers:
-      reg_class  = f"{block_name}_{reg['name'].lower()}_reg"
-      reg_handle = reg['name'].lower()
-      f.write(f"  rand {reg_class} {reg_handle};\n")
-    f.write(f"\n  function new(string name = \"{block_name}\");\n")
-    f.write(f"    super.new(name, UVM_NO_COVERAGE);\n")
-    f.write(f"  endfunction\n\n")
-    f.write(f"  virtual function void build();\n")
-    f.write(f"    default_map = create_map(\"default_map\", 0, 4, UVM_LITTLE_ENDIAN);\n")
-    for reg in registers:
-      reg_class  = f"{block_name}_{reg['name'].lower()}_reg"
-      reg_handle = reg['name'].lower()
-      f.write(f"    {reg_handle} = {reg_class}::type_id::create(\"{reg_handle}\");\n")
-      f.write(f"    {reg_handle}.build();\n")
-      f.write(f"    {reg_handle}.configure(this);\n")
-      f.write(f"    default_map.add_reg({reg_handle}, {reg['address']}, \"RW\");\n")
-    f.write(f"  endfunction\n\n")
-    f.write(f"endclass\n")
-
-###########################################################
-# Execute generation based on config
-###########################################################
-def main():
-  gen_ral()
-
-if __name__ == "__main__":
-  main()
+  gen_reg_block(model)
+  gen_adapter(model)

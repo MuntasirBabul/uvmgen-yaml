@@ -1,45 +1,56 @@
-import yaml
-from pathlib import Path
-
-with open("config/design.yaml") as f:
-  cfg = yaml.safe_load(f)
-
 ###########################################################
-# Generate sequence.sv
+# sequence_gen.py - generate uvm_sequence classes
 ###########################################################
-def gen_sequence(sequence):
-  sequence_name = sequence["name"]
-  out_dir = Path(f"generated/test/sequences/")
-  out_dir.mkdir(parents=True, exist_ok=True)
-  with open(out_dir / f"{sequence_name}.sv", "w") as f:
-    f.write(f"// {sequence_name} Sequence\n\n")
-    #f.write(f"`include \"uvm_macros.svh\"\n\n")
-    base_class = sequence.get("base_class", "uvm_sequence")
-    f.write(f"class {sequence_name} extends {base_class};\n\n")
-    f.write(f"  `uvm_object_utils({sequence_name})\n\n")
-    f.write(f"   function new(string name = \"{sequence_name}\");\n")
-    f.write(f"     super.new(name);\n")
-    f.write(f"   endfunction\n\n")
-    if "body" in sequence:
-      f.write(f"   virtual task body();\n")
-      f.write(f"     // Implement sequence body here\n")
-      if "num_transactions" in sequence["body"]:
-        num_txns = sequence["body"]["num_transactions"]
-        f.write(f"     repeat({num_txns}) begin\n")
-        f.write(f"       // Create and start child sequences or generate transactions here\n")
-        f.write(f"     end\n")
-      else:
-        f.write(f"     // Create and start child sequences or generate transactions here\n")
-      f.write(f"   endtask\n\n")
-    f.write(f"endclass\n")
+from core import Model, SVWriter, write_file
 
-###########################################################
-# Execute generation based on config
-###########################################################
-def main():
-  
-  for seq in cfg["sequences"]:
-    gen_sequence(seq)
 
-if __name__ == "__main__":
-  main()
+def root_sequence_item(model: Model, seq):
+  """Walk base_class chain up to the root sequence to find its item type."""
+  while seq.get("base_class", "uvm_sequence") != "uvm_sequence":
+    seq = model.sequences[seq["base_class"]]
+  return seq["sequence_item"]
+
+
+def gen_sequence(model: Model, seq):
+  name = seq["name"]
+  base = seq.get("base_class", "uvm_sequence")
+  item = root_sequence_item(model, seq)
+  parent = f"uvm_sequence #({item})" if base == "uvm_sequence" else base
+
+  s = SVWriter()
+  s.w(f"// {name} Sequence")
+  s.w()
+  s.begin(f"class {name} extends {parent};")
+  s.w()
+  s.w(f"`uvm_object_utils({name})")
+  s.w()
+  s.begin(f"function new(string name = \"{name}\");")
+  s.w("super.new(name);")
+  s.end("endfunction")
+  s.w()
+  if "body" in seq:
+    s.begin("virtual task body();")
+    num = seq["body"].get("num_transactions")
+    if num is not None:
+      s.begin(f"repeat ({num}) begin")
+      s.w(f"req = {item}::type_id::create(\"req\");")
+      s.w("start_item(req);")
+      s.w("if (!req.randomize())")
+      s.w(f"  `uvm_error(\"{name.upper()}\", \"randomization failed\")")
+      s.user_code(f"{name}_body")
+      s.w("finish_item(req);")
+      s.end("end")
+    else:
+      s.user_code(f"{name}_body")
+    s.end("endtask")
+    s.w()
+  s.end("endclass")
+
+  path = model.dir("sequences") / f"{name}.sv"
+  write_file(path, s.text(), model.overwrite)
+  model.register("sequences", path)
+
+
+def generate(model: Model):
+  for seq in model.sequences.values():
+    gen_sequence(model, seq)

@@ -2,6 +2,8 @@
 
 # Ignore an entire folder (always add a trailing slash)
 generated/
+generated_tb/
+__pycache__/
 
 # Ignore all files matching an extension
 *.log

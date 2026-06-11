@@ -1,51 +1,71 @@
-import yaml
-from pathlib import Path
-
-with open("config/design.yaml") as f:
-  cfg = yaml.safe_load(f)
-
 ###########################################################
-# Generate top.sv
+# top_gen.py - generate top-level testbench module
 ###########################################################
-def gen_top(project):
-  out_dir = Path(f"generated/")
-  out_dir.mkdir(parents=True, exist_ok=True)
-  with open(out_dir / f"{project['name']}.sv", "w") as f:
-    f.write(f"`include \"uvm_macros.svh\"\n")
-    f.write(f"import uvm_pkg::*;\n")
-    f.write(f"`include \"{project['dut_name']}_include_files.sv\"\n\n")
-    f.write(f"module {project['name']};\n")
-    f.write(f"  // --------------------------------- \n")
-    f.write(f"  // Clock generation \n")
-    f.write(f"  // --------------------------------- \n")
-    f.write(f"  // --------------------------------- \n")
-    f.write(f"  // Instantiate Interfaces Here \n")
-    f.write(f"  // --------------------------------- \n")
-    for intf in cfg['interface']:
-      f.write(f"  {intf['name']} {intf['name']}_handle();\n")
+from core import Model, SVWriter, write_file, handle_name
 
-    f.write(f"  // --------------------------------- \n")
-    f.write(f"  // DUT instantiate \n")
-    f.write(f"  // --------------------------------- \n")
-    f.write(f"  // --------------------------------- \n")
-    f.write(f"  // UVM Start up \n")
-    f.write(f"  // --------------------------------- \n")
-    f.write(f"  initial begin\n")
-    f.write(f"    `uvm_info(\"INFO-TOP\", \"Starting UVM testbench\", UVM_LOW)\n")
-    f.write(f"    // Give interface to UVM world\n")
-    for intf in cfg['interface']:
-      f.write(f"    uvm_config_db#(virtual {intf['name']})::set(null, \"*\", \"{intf['name']}_handle\", {intf['name']}_handle);\n")
-    f.write(f"    // Provide test name\n")
-    f.write(f"    run_test(\"\");\n")
-    f.write(f"  end\n")
-    f.write(f"endmodule : {project['name']}\n")
 
-###########################################################
-# Execute generation based on config
-###########################################################
-def main():
-  for project in cfg['project']:
-    gen_top(project)
+def gen_top(model: Model):
+  proj = model.project
+  top_name = proj["name"]
+  pkg = proj["package_name"]
+  dut = proj["dut_name"]
 
-if __name__ == "__main__":
-  main()
+  s = SVWriter()
+  s.w("`include \"uvm_macros.svh\"")
+  s.w()
+  s.begin(f"module {top_name};")
+  s.w()
+  s.w("import uvm_pkg::*;")
+  s.w(f"import {pkg}::*;")
+  s.w()
+  s.w("// ---------------------------------")
+  s.w("// Interfaces")
+  s.w("// ---------------------------------")
+  for intf in model.interfaces.values():
+    s.w(f"{intf['name']} {handle_name(intf['name'])}();")
+  s.w()
+  s.w("// ---------------------------------")
+  s.w("// Clock / Reset generation")
+  s.w("// ---------------------------------")
+  for intf in model.interfaces.values():
+    clock = intf.get("clock")
+    reset = intf.get("reset")
+    vif = handle_name(intf["name"])
+    if clock:
+      s.w(f"initial {vif}.{clock} = 0;")
+      s.w(f"always #5 {vif}.{clock} = ~{vif}.{clock};")
+    if reset:
+      s.begin("initial begin")
+      s.w(f"{vif}.{reset} = 1;")
+      s.w(f"repeat (5) @(posedge {vif}.{clock});" if clock else "#50;")
+      s.w(f"{vif}.{reset} = 0;")
+      s.end("end")
+  s.w()
+  s.w("// ---------------------------------")
+  s.w(f"// DUT instantiation ({dut})")
+  s.w("// ---------------------------------")
+  s.user_code(f"{dut}_instantiation")
+  s.w()
+  s.w("// ---------------------------------")
+  s.w("// UVM start up")
+  s.w("// ---------------------------------")
+  s.begin("initial begin")
+  s.w(f"`uvm_info(\"TOP\", \"Starting UVM testbench\", UVM_LOW)")
+  s.w("// Hand interfaces to the UVM world")
+  for intf in model.interfaces.values():
+    vif = handle_name(intf["name"])
+    s.w(f"uvm_config_db#(virtual {intf['name']})::set(null, \"uvm_test_top*\", \"{vif}\", {vif});")
+  s.w("// Test selected with +UVM_TESTNAME=<test>")
+  s.w("run_test();")
+  s.end("end")
+  s.w()
+  s.end(f"endmodule : {top_name}")
+
+  path = model.root / f"{top_name}.sv"
+  write_file(path, s.text(), model.overwrite)
+  model.top_file = path
+
+
+def generate(model: Model):
+  if model.enabled("create_top_tb"):
+    gen_top(model)

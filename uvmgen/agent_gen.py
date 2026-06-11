@@ -1,149 +1,206 @@
-import yaml
-from pathlib import Path
-
-with open("config/design.yaml") as f:
-  cfg = yaml.safe_load(f)
-
 ###########################################################
-# Generate agent.sv
+# agent_gen.py - generate agent + driver/monitor/sequencer
 ###########################################################
-def gen_agent(agent):
-  agent_name = agent["name"]
-  out_dir = Path(f"generated/{agent_name}")
-  out_dir.mkdir(parents=True, exist_ok=True)
-
-  agent_type        = agent.get("type")
-  seqr_name         = agent["components"]["sequencer"]["name"]
-  interface_name    = agent["components"]["interface"]["name"]
-  monitor_name      = agent["components"]["monitor"]["name"] 
-  driver_name       = agent["components"]["driver"]["name"]   
-  ##################################
-  # Generate agent class
-  ###################################
-  with open(out_dir / f"{agent_name}.sv", "w") as f:
-    f.write(f"// {agent_name} Agent\n\n")
-    #f.write(f"`include \"uvm_macros.svh\"\n\n")
-    f.write(f"class {agent_name} extends uvm_agent;\n\n")
-    f.write(f"  `uvm_component_utils({agent_name})\n\n")
-    f.write(f"  function new(string name = \"{agent_name}\", uvm_component parent);\n") 
-    f.write(f"    super.new(name, parent);\n")
-    f.write(f"  endfunction\n\n")
-    f.write(f"  // Declare component Handles\n")
-    if agent_type == "active":
-      seq_item_name = agent["components"]["driver"]["sequence_item"]
-      f.write(f"  uvm_sequencer #({seq_item_name}) {seqr_name}_handle;\n")
-      f.write(f"  {driver_name} {driver_name}_handle;\n")
-    f.write(f"  {monitor_name} {monitor_name}_handle;\n")
-    f.write(f"\n")
-    f.write(f"  // Build Phase\n")
-    f.write(f"  function void build_phase(uvm_phase phase);\n")
-    f.write(f"    super.build_phase(phase);\n")
-    if agent_type == "active":      
-      seq_item_name = agent["components"]["driver"]["sequence_item"]
-      f.write(f"     {seqr_name}_handle = uvm_sequencer#({seq_item_name})::type_id::create(\"{seqr_name}_handle\", this);\n")
-      f.write(f"     {driver_name}_handle = {driver_name}::type_id::create(\"{driver_name}_handle\", this);\n")
-    f.write(f"     {monitor_name}_handle = {monitor_name}::type_id::create(\"{monitor_name}_handle\", this);\n")
-    f.write(f"   endfunction\n\n")
-    f.write(f"   // Connect Phase\n")
-    f.write(f"   function void connect_phase(uvm_phase phase);\n")
-    f.write(f"     super.connect_phase(phase);\n")
-    if agent_type == "active":
-      for connect in agent['connection']:
-        f.write(f"     {connect['destination']}_handle.seq_item_port.connect({connect['source']}_handle.seq_item_export);\n")
-    f.write(f"   endfunction\n\n")
-    f.write(f"endclass\n")
-  
-  ##################################
-  # Generate monitor class
-  ###################################
-  with open(out_dir / f"{monitor_name}.sv", "w") as f: 
-    seq_item_name = agent["components"]["monitor"]["sequence_item"]
-    ports = agent["components"]["monitor"]["ports"]
-    f.write(f"// {monitor_name} Monitor\n\n")
-    #f.write(f"`include \"uvm_macros.svh\"\n\n")
-    f.write(f"class {monitor_name} extends uvm_monitor;\n\n")
-    f.write(f"  `uvm_component_utils({monitor_name})\n\n")
-    f.write(f"  function new(string name = \"{monitor_name}\", uvm_component parent);\n")
-    f.write(f"    super.new(name, parent);\n")
-    f.write(f"  endfunction\n\n")
-    f.write(f"  virtual {interface_name} {interface_name}_handle;\n\n")
-    for port in ports:
-      f.write(f"  {port['type']}#({port['base_class']}) {port['name']};\n")
-    f.write(f"\n  virtual function void build_phase(uvm_phase phase);\n")
-    f.write(f"    super.build_phase(phase);\n")
-    f.write(f"    if(!uvm_config_db#(virtual {interface_name})::get(this, \"\", \"{interface_name}_handle\", {interface_name}_handle))\n")
-    f.write(f"      `uvm_fatal(\"MONITOR\", $sformatf(\"{interface_name} handle not found in config_db\"))\n")
-    for port in ports:
-      f.write(f"    {port['name']} = new(\"{port['name']}\", this);\n")
-    f.write(f"  endfunction\n\n")
-    f.write(f"  virtual task run_phase(uvm_phase phase);\n")
-    f.write(f"    super.run_phase(phase);\n")
-    f.write(f"    // Implement monitor behavior here\n")
-    f.write(f"    forever begin\n")
-    f.write(f"      // Sample interface signals and create sequence items as needed\n")
-    f.write(f"    end\n")
-    f.write(f"  endtask\n\n")    
-    f.write(f"endclass\n")
-
-  ##################################
-  # Generate driver class
-  ###################################
-  if agent_type == "active":
-    with open(out_dir / f"{driver_name}.sv", "w") as f:
-      driver_name = agent["components"]["driver"]["name"]
-      seq_item_name = agent["components"]["driver"]["sequence_item"]
-      f.write(f"// {driver_name} Driver\n\n")
-      #f.write(f"`include \"uvm_macros.svh\"\n\n")
-      f.write(f"class {driver_name} extends uvm_driver #({seq_item_name});\n\n")
-      f.write(f"  `uvm_component_utils({driver_name})\n\n")
-      f.write(f"   function new(string name = \"{driver_name}\", uvm_component parent);\n")
-      f.write(f"     super.new(name, parent);\n")
-      f.write(f"   endfunction\n\n")
-      f.write(f"   virtual {interface_name} {interface_name}_handle;\n\n")
-      f.write(f"   virtual function void build_phase(uvm_phase phase);\n")
-      f.write(f"     super.build_phase(phase);\n")
-      f.write(f"     if(!uvm_config_db#(virtual {interface_name})::get(this, \"\", \"{interface_name}_handle\", {interface_name}_handle))\n")
-      f.write(f"       `uvm_fatal(\"DRIVER\", $sformatf(\"{interface_name} handle not found in config_db\"))\n")
-      f.write(f"   endfunction\n\n")
-      f.write(f"   virtual task run_phase(uvm_phase phase);\n")
-      f.write(f"     super.run_phase(phase);\n")
-      f.write(f"     // Implement driver behavior here\n")
-      f.write(f"     forever begin\n")
-      f.write(f"       {seq_item_name} {seq_item_name}_handle;\n")
-      f.write(f"       seq_item_port.get_next_item({seq_item_name}_handle);\n")
-      f.write(f"       // Drive interface signals based on {seq_item_name}_handle fields\n")
-      f.write(f"       drive_item({seq_item_name}_handle);\n")
-      f.write(f"       seq_item_port.item_done();\n")
-      f.write(f"     end\n")
-      f.write(f"   endtask\n\n")
-      f.write(f"   virtual task drive_item({seq_item_name} {seq_item_name}_handle);\n")
-      f.write(f"     // Implement signal driving logic based on {seq_item_name}_handle fields\n")
-      f.write(f"   endtask\n\n")
-      f.write(f"endclass\n")
-
-    ##################################
-    # Generate sequencer class
-    ################################### 
-    with open(out_dir / f"{seqr_name}.sv", "w") as f:
-      f.write(f"// {seqr_name} Sequencer\n\n")
-      #f.write(f"`include \"uvm_macros.svh\"\n\n")
-      f.write(f"class {seqr_name} extends uvm_sequencer #({seq_item_name});\n\n")
-      f.write(f"  `uvm_component_utils({seqr_name})\n\n")
-      f.write(f"   function new(string name = \"{seqr_name}\", uvm_component parent);\n")
-      f.write(f"     super.new(name, parent);\n")
-      f.write(f"   endfunction\n\n")
-      f.write(f"endclass\n")
-
-    
+from core import Model, SVWriter, write_file, handle_name
 
 
 ###########################################################
-# Execute generation based on config
+# Sequencer
 ###########################################################
-def main():
-  
-  for agent in cfg["agents"]:
-    gen_agent(agent)
+def gen_sequencer(model: Model, agent, out_dir):
+  seqr = agent["components"]["sequencer"]
+  name = seqr["name"]
+  item = seqr["sequence_item"]
+  s = SVWriter()
+  s.w(f"// {name} Sequencer")
+  s.w()
+  s.begin(f"class {name} extends uvm_sequencer #({item});")
+  s.w()
+  s.w(f"`uvm_component_utils({name})")
+  s.w()
+  s.begin(f"function new(string name = \"{name}\", uvm_component parent);")
+  s.w("super.new(name, parent);")
+  s.end("endfunction")
+  s.w()
+  s.end("endclass")
+  path = out_dir / f"{name}.sv"
+  write_file(path, s.text(), model.overwrite)
+  model.register("agent_sub", path)
 
-if __name__ == "__main__":
-  main()
+
+###########################################################
+# Driver
+###########################################################
+def gen_driver(model: Model, agent, out_dir):
+  drv = agent["components"]["driver"]
+  name = drv["name"]
+  item = drv["sequence_item"]
+  intf = model.agent_interface(agent)
+  vif = handle_name(intf)
+  s = SVWriter()
+  s.w(f"// {name} Driver")
+  s.w()
+  s.begin(f"class {name} extends uvm_driver #({item});")
+  s.w()
+  s.w(f"`uvm_component_utils({name})")
+  s.w()
+  s.w(f"virtual {intf} {vif};")
+  s.w()
+  s.begin(f"function new(string name = \"{name}\", uvm_component parent);")
+  s.w("super.new(name, parent);")
+  s.end("endfunction")
+  s.w()
+  s.begin("virtual function void build_phase(uvm_phase phase);")
+  s.w("super.build_phase(phase);")
+  s.w(f"if (!uvm_config_db#(virtual {intf})::get(this, \"\", \"{vif}\", {vif}))")
+  s.w(f"  `uvm_fatal(\"{name.upper()}\", \"{intf} handle not found in config_db\")")
+  s.end("endfunction")
+  s.w()
+  s.begin("virtual task run_phase(uvm_phase phase);")
+  s.w("super.run_phase(phase);")
+  s.begin("forever begin")
+  s.w("seq_item_port.get_next_item(req);")
+  s.w("drive_item(req);")
+  s.w("seq_item_port.item_done();")
+  s.end("end")
+  s.end("endtask")
+  s.w()
+  s.begin(f"virtual task drive_item({item} item);")
+  s.w(f"// Drive {intf} signals from item fields")
+  s.user_code(f"{name}_drive_item")
+  s.end("endtask")
+  s.w()
+  s.end("endclass")
+  path = out_dir / f"{name}.sv"
+  write_file(path, s.text(), model.overwrite)
+  model.register("agent_sub", path)
+
+
+###########################################################
+# Monitor
+###########################################################
+def gen_monitor(model: Model, agent, out_dir):
+  mon = agent["components"]["monitor"]
+  name = mon["name"]
+  item = mon["sequence_item"]
+  intf = model.agent_interface(agent)
+  vif = handle_name(intf)
+  ports = mon.get("ports", [])
+  s = SVWriter()
+  s.w(f"// {name} Monitor")
+  s.w()
+  s.begin(f"class {name} extends uvm_monitor;")
+  s.w()
+  s.w(f"`uvm_component_utils({name})")
+  s.w()
+  s.w(f"virtual {intf} {vif};")
+  for port in ports:
+    s.w(f"{port['type']} #({port['base_class']}) {port['name']};")
+  s.w()
+  s.begin(f"function new(string name = \"{name}\", uvm_component parent);")
+  s.w("super.new(name, parent);")
+  s.end("endfunction")
+  s.w()
+  s.begin("virtual function void build_phase(uvm_phase phase);")
+  s.w("super.build_phase(phase);")
+  s.w(f"if (!uvm_config_db#(virtual {intf})::get(this, \"\", \"{vif}\", {vif}))")
+  s.w(f"  `uvm_fatal(\"{name.upper()}\", \"{intf} handle not found in config_db\")")
+  for port in ports:
+    s.w(f"{port['name']} = new(\"{port['name']}\", this);")
+  s.end("endfunction")
+  s.w()
+  s.begin("virtual task run_phase(uvm_phase phase);")
+  s.w("super.run_phase(phase);")
+  s.begin("forever begin")
+  s.w(f"{item} trans;")
+  s.w(f"trans = {item}::type_id::create(\"trans\");")
+  s.w(f"// Sample {intf} signals into trans, then publish:")
+  s.user_code(f"{name}_sample")
+  if ports:
+    s.w(f"{ports[0]['name']}.write(trans);")
+  s.end("end")
+  s.end("endtask")
+  s.w()
+  s.end("endclass")
+  path = out_dir / f"{name}.sv"
+  write_file(path, s.text(), model.overwrite)
+  model.register("agent_sub", path)
+
+
+###########################################################
+# Agent
+###########################################################
+def gen_agent_class(model: Model, agent, out_dir):
+  name = agent["name"]
+  comps = agent["components"]
+  is_active = agent.get("type") == "active"
+  cfg_obj = agent.get("config_object")
+  mon = comps["monitor"]["name"]
+  s = SVWriter()
+  s.w(f"// {name} Agent")
+  s.w()
+  s.begin(f"class {name} extends uvm_agent;")
+  s.w()
+  s.w(f"`uvm_component_utils({name})")
+  s.w()
+  s.w("// Component handles")
+  if is_active:
+    seqr = comps["sequencer"]["name"]
+    drv = comps["driver"]["name"]
+    s.w(f"{seqr} {handle_name(seqr)};")
+    s.w(f"{drv} {handle_name(drv)};")
+  s.w(f"{mon} {handle_name(mon)};")
+  if cfg_obj:
+    s.w(f"{cfg_obj} {handle_name(cfg_obj)};")
+  s.w()
+  s.begin(f"function new(string name = \"{name}\", uvm_component parent);")
+  s.w("super.new(name, parent);")
+  s.end("endfunction")
+  s.w()
+  s.begin("virtual function void build_phase(uvm_phase phase);")
+  s.w("super.build_phase(phase);")
+  if cfg_obj:
+    cfg_h = handle_name(cfg_obj)
+    s.w(f"if (!uvm_config_db#({cfg_obj})::get(this, \"\", \"cfg\", {cfg_h}))")
+    s.w(f"  {cfg_h} = {cfg_obj}::type_id::create(\"{cfg_h}\");")
+  if is_active:
+    seqr = comps["sequencer"]["name"]
+    drv = comps["driver"]["name"]
+    if cfg_obj and model.cfg_obj_has_field(cfg_obj, "is_active"):
+      s.begin(f"if ({handle_name(cfg_obj)}.is_active == UVM_ACTIVE) begin")
+    else:
+      s.begin("begin")
+    s.w(f"{handle_name(seqr)} = {seqr}::type_id::create(\"{handle_name(seqr)}\", this);")
+    s.w(f"{handle_name(drv)} = {drv}::type_id::create(\"{handle_name(drv)}\", this);")
+    s.end("end")
+  s.w(f"{handle_name(mon)} = {mon}::type_id::create(\"{handle_name(mon)}\", this);")
+  s.end("endfunction")
+  s.w()
+  s.begin("virtual function void connect_phase(uvm_phase phase);")
+  s.w("super.connect_phase(phase);")
+  if is_active:
+    if cfg_obj and model.cfg_obj_has_field(cfg_obj, "is_active"):
+      s.begin(f"if ({handle_name(cfg_obj)}.is_active == UVM_ACTIVE) begin")
+    else:
+      s.begin("begin")
+    for conn in agent.get("connection", []):
+      src = conn["source"]
+      dst = conn["destination"]
+      s.w(f"{handle_name(dst)}.seq_item_port.connect({handle_name(src)}.seq_item_export);")
+    s.end("end")
+  s.end("endfunction")
+  s.w()
+  s.end("endclass")
+  path = out_dir / f"{name}.sv"
+  write_file(path, s.text(), model.overwrite)
+  model.register("agent", path)
+
+
+def generate(model: Model):
+  for agent in model.agents.values():
+    out_dir = model.dir("agents") / agent["name"]
+    gen_monitor(model, agent, out_dir)
+    if agent.get("type") == "active":
+      gen_sequencer(model, agent, out_dir)
+      gen_driver(model, agent, out_dir)
+    gen_agent_class(model, agent, out_dir)
